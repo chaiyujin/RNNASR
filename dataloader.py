@@ -19,10 +19,10 @@ def save_phonemes(path='./phonemes'):
 
 
 def get_phonemes_list_and_map(path='./phonemes'):
-    phoneme_list = []
-    phoneme_map = {}
+    phoneme_list = ['_']
+    phoneme_map = {'_': 0}
     with open(path) as file:
-        idx = 0
+        idx = 1
         for line in file:
             phoneme_list.append(line.strip().split(' ')[0])
             phoneme_map[line.strip().split(' ')[0]] = idx
@@ -55,9 +55,13 @@ def load_timit(data_path, save_path):
         d['mel'] = mfcc(audio, samplerate=fs)
         d['phn'] = []
         with open(file_prefix + '.PHN') as file:
+            d['phn'].append(0)  # head space
             for line in file:
                 phn = line.strip().split(' ')[2]
+                assert(map[phn] != 0)
                 d['phn'].append(map[phn])
+                d['phn'].append(0)  # space after every character
+        assert(len(d['phn']) > 0)
         all_data.append(d)
 
     # print(all_data)
@@ -116,3 +120,5 @@ if __name__ == '__main__':
     all_data = load_data()
     print('Train set: ' + str(len(all_data['train_set'])))
     print('Test  set: ' + str(len(all_data['test_set'])))
+
+    print(all_data['train_set'][0]['phn'])
