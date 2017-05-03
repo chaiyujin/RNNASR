@@ -15,9 +15,9 @@ num_features = 13
 # 61 phonemes and blank
 num_classes = 62
 
-num_hidden = 50
+num_hidden = 100
 num_layers = 1
-num_epochs = 200
+num_epochs = 400
 batch_size = 64
 initial_learning_rate = 1e-2
 
