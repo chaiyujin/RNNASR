@@ -1,4 +1,4 @@
-import sys, time
+import sys
 
 
 def process_bar(x, total, length=50):
@@ -14,9 +14,3 @@ def process_bar(x, total, length=50):
     line += ']'
     sys.stdout.write(line + ' ' + str(int(x * 100 / total)) + '%\r')
     sys.stdout.flush()
-
-
-if __name__ == '__main__':
-    for i in range(100):
-        process_bar(i, 100)
-        time.sleep(.1)

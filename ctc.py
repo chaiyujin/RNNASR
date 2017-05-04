@@ -1,8 +1,11 @@
-import time, sys
-import utils
-import numpy as np
+import sys
+import time
+from utils.process_bar import process_bar
+from utils.sample_draw import sample_draw
 import tensorflow as tf
-from dataloader import load_data, process_data, get_phonemes_list_and_map, process_target, pad_sequences
+from data_loader import load_data, process_target, mean_std, pad_sequences
+from data_loader import load_single
+import matplotlib.pyplot as plt
 
 
 def LSTMCell(num_hidden):
@@ -11,30 +14,40 @@ def LSTMCell(num_hidden):
 
 
 # use 13 mfcc
-num_features = 13
+num_features = 39
 # 61 phonemes and blank
-num_classes = 62
+num_classes = 40
 
-num_hidden = 100
+num_hidden = 128
 num_layers = 1
-num_epochs = 400
-batch_size = 64
-initial_learning_rate = 1e-2
+num_epochs = 500
+batch_size = 32
+# initial_learning_rate = 5e-3
+initial_learning_rate = 1e-3
 
 # load all data from pkl
 all_data = load_data()
 # process training data
-train_inputs, train_seq_lens, train_targets = \
-    process_data(all_data['train_set'])
-val_inputs, val_seq_lens, val_targets = \
-    process_data(all_data['test_set'])
 
-train_set = np.asarray(all_data['train_set'])
-test_set = np.asarray(all_data['test_set'])
+train_set = all_data['train_set']
+test_set = all_data['test_set']
 
-num_examples = len(train_set)
-num_val = len(test_set)
+mean, std = mean_std(train_set['sources'])
+train_set['sources'] = (train_set['sources'] - mean) / std
+test_set['sources'] = (test_set['sources'] - mean) / std
+
+# padding
+train_set['sources'], train_set['seq_len'] = pad_sequences(train_set['sources'])
+test_set['sources'], test_set['seq_len'] = pad_sequences(test_set['sources'])
+
+# num_examples = batch_size
+# num_val = 1
+num_examples = len(train_set['sources'])
+num_val = len(test_set['sources'])
 num_batches_per_epoch = int(num_examples/batch_size)
+
+# data to draw
+one_data = load_single()
 
 # build rnn
 graph = tf.Graph()
@@ -74,6 +87,8 @@ with graph.as_default():
     # Time major
     logits = tf.transpose(logits, (1, 0, 2))
 
+    phoneme_prob = tf.nn.softmax(logits)
+
     loss = tf.nn.ctc_loss(targets, logits, seq_len)
     cost = tf.reduce_mean(loss)
 
@@ -88,6 +103,12 @@ with graph.as_default():
     ler = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32),
                                           targets))
 
+epochs = []
+train_costs = []
+valid_costs = []
+train_lers = []
+valid_lers = []
+
 with tf.Session(graph=graph) as session:
     # Initializate the weights and biases
     tf.global_variables_initializer().run()
@@ -96,57 +117,73 @@ with tf.Session(graph=graph) as session:
     val_ler = float('nan')
 
     for curr_epoch in range(num_epochs):
+        # the No. curr_epoch
+        epochs.append(curr_epoch)
+
+        # training phase
         train_cost = train_ler = 0
         start = time.time()
         print("train...")
         for batch in range(num_batches_per_epoch):
             indexes = [i % num_examples for i in range(batch * batch_size, (batch + 1) * batch_size)]
-            train_data = train_set[indexes]
+            batch_train_inputs = train_set['sources'][indexes]
+            batch_train_seq_lens = train_set['seq_len'][indexes]
+            batch_train_targets = process_target(train_set['targets'][indexes])
 
-            batch_train_inputs, batch_train_seq_lens, batch_train_targets = \
-                process_data(train_data)
-
-            batch_train_inputs, batch_train_seq_lens = pad_sequences(batch_train_inputs)
+            # batch_train_inputs, batch_train_seq_lens = pad_sequences(batch_train_inputs)
 
             feed = {inputs: batch_train_inputs,
                     targets: batch_train_targets,
                     seq_len: batch_train_seq_lens}
 
             batch_cost, _ = session.run([cost, optimizer], feed)
+            batch_ler = session.run(ler, feed_dict=feed)
             sys.stdout.write('Cost: ' + str(batch_cost) + '\t')
+            sys.stdout.write('LER: ' + str(batch_ler) + '\t')
 
-            train_cost += batch_cost*batch_size
-            train_ler += session.run(ler, feed_dict=feed)*batch_size
+            train_cost += batch_cost * batch_size
+            train_ler += batch_ler * batch_size
 
-            utils.process_bar(batch, num_batches_per_epoch)
+            process_bar(batch, num_batches_per_epoch)
 
         train_cost /= num_examples
         train_ler /= num_examples
 
-        if curr_epoch % 20 == 0:
-            val_cost_all = 0
-            val_ler_all = 0
-            print("\nvalid...")
-            for i in range(num_val):
-                utils.process_bar(i, num_val)
-                val_set = test_set[[i]]
+        # validation phase
+        val_targets = process_target(test_set['targets'])
+        val_feed = {inputs: test_set['sources'],
+                    targets: val_targets,
+                    seq_len: test_set['seq_len']}
 
-                val_inputs, val_seq_lens, val_targets = \
-                    process_data(val_set)
+        val_cost, val_ler = session.run([cost, ler], feed_dict=val_feed)
 
-                val_feed = {inputs: val_inputs,
-                            targets: val_targets,
-                            seq_len: val_seq_lens}
-
-                val_cost, val_ler = session.run([cost, ler], feed_dict=val_feed)
-
-                val_cost_all += val_cost
-                val_ler_all += val_ler
-
-            val_cost = val_cost_all / num_val
-            val_ler = val_ler_all / num_val
-
+        # print log
         log = "Epoch {}/{}, train_cost = {:.3f}, train_ler = {:.3f}, val_cost = {:.3f}, val_ler = {:.3f}, time = {:.3f}"
         print(log.format(curr_epoch+1, num_epochs, train_cost, train_ler,
                          val_cost, val_ler, time.time() - start))
 
+        # draw training curve
+        train_costs.append(train_cost)
+        train_lers.append(train_ler)
+        valid_costs.append(val_cost)
+        valid_lers.append(val_ler)
+
+        if curr_epoch % 10 == 1:
+            # draw the figure of the training process
+            fig = plt.figure(figsize=(12, 12))
+            cost_plt = fig.add_subplot(211)
+            ler_plt = fig.add_subplot(212)
+            cost_plt.title.set_text('Cost')
+            ler_plt.title.set_text('LER')
+            cost_plt.plot(epochs, train_costs, 'g', epochs, valid_costs, 'r')
+            ler_plt.plot(epochs, train_lers, 'g', epochs, valid_lers, 'r')
+            plt.savefig('error.png')
+            plt.clf()
+
+        # draw alignment
+        draw_feed = {inputs: one_data['sources'],
+                     seq_len: one_data['seq_len']}
+        prob = session.run([phoneme_prob], feed_dict=draw_feed)
+        sample_draw(prob[0])
+
+# plt.show()

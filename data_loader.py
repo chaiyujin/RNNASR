@@ -2,33 +2,8 @@ import os
 import pickle
 import numpy as np
 import scipy.io.wavfile as wav
-from python_speech_features import mfcc
-
-global_map = {}
-
-
-def save_phonemes(path='./phonemes'):
-    # save the map of id and phoneme
-    phoneme_list = []
-    for k in global_map:
-        phoneme_list.append(k)
-    phoneme_list.sort()
-    # save in file
-    with open('phonemes', 'w') as file:
-        for i in range(len(phoneme_list)):
-            file.write(str(phoneme_list[i]) + ' ' + str(i) + '\n')
-
-
-def get_phonemes_list_and_map(path='./phonemes'):
-    phoneme_list = ['_']
-    phoneme_map = {'_': 0}
-    with open(path) as file:
-        idx = 1
-        for line in file:
-            phoneme_list.append(line.strip().split(' ')[0])
-            phoneme_map[line.strip().split(' ')[0]] = idx
-            idx += 1
-    return phoneme_list, phoneme_map
+from python_speech_features import mfcc, delta, logfbank
+from utils.phonemes import get_phoneme_id
 
 
 def find_data(root_dir, result_list):
@@ -40,70 +15,68 @@ def find_data(root_dir, result_list):
 
 
 def load_timit(data_path, save_path):
-    all_data = []
+    all_data = {
+        'sources': [],
+        'targets': [],
+        'seq_len': []
+    }
     # 1. get the file name from path
     print('Find data from ', data_path)
     file_list = []
     find_data(data_path, file_list)
     # 2. generate mfcc from audio file and phoneme
-    _, map = get_phonemes_list_and_map()
     print('Pre-process data..')
     for file_prefix in file_list:
         print(file_prefix)
         d = {}
         wav_file = file_prefix + '.WAV'
         fs, audio = wav.read(wav_file)
-        d['mel'] = mfcc(audio, samplerate=fs)
+        mfcc_feat = mfcc(audio, samplerate=fs)
+        # d_mfcc_feat = delta(mfcc_feat, 2)
+        fbank_feat = logfbank(audio, samplerate=fs)
+        d['mel'] = []
+        for mel, fbank in zip(mfcc_feat, fbank_feat):
+            tmp = []
+            for a in mel:
+                tmp.append(a)
+            for a in fbank:
+                tmp.append(a)
+            d['mel'].append(np.asarray(tmp, dtype=np.float32))
+            # print(len(d['mel'][-1]))
         d['phn'] = []
-        d['phn_nb'] = []
+        print(len(d['mel'][-1]))
         with open(file_prefix + '.PHN') as file:
-            d['phn'].append(0)  # head space
             for line in file:
                 phn = line.strip().split(' ')[2]
-                assert(map[phn] != 0)
-                d['phn'].append(map[phn])
-                d['phn'].append(0)  # space after every character
-                d['phn_nb'].append(map[phn] - 1)  # no blank at 0
+                id = get_phoneme_id(phn)
+                if id is None:
+                    continue
+                assert(id is not None)
+                if len(d['phn']) == 0 or id != d['phn'][-1]:
+                    d['phn'].append(id)
         assert(len(d['phn']) > 0)
-        all_data.append(d)
+        all_data['sources'].append(np.asarray(d['mel'], dtype=np.float32))
+        all_data['targets'].append(np.asarray(d['phn'], dtype=np.int32))
+        all_data['seq_len'].append(len(d['mel']))
+
+    for k in all_data:
+        all_data[k] = np.asarray(all_data[k])
+
+    print(type(all_data['sources']))
+    print(type(all_data['targets']))
 
     # print(all_data)
     with open(save_path, 'wb') as pkl_file:
         pickle.dump(all_data, pkl_file)
 
-    # # test load
-    # with open(save_path, 'rb') as pkl_file:
-    #     data = pickle.load(pkl_file)
-    #     print(data)
 
-
-def find_all_phonemes(root_dir):
-    global global_map
-    global_map = {}
-    result_list = []
-    for parent, dirs, files in os.walk(root_dir):
-        for file in files:
-            name, ext = os.path.splitext(os.path.join(parent, file))
-            if ext == '.PHN':
-                result_list.append(name)
-
-    for file_p in result_list:
-        with open(file_p + '.PHN') as phn_file:
-            for line in phn_file:
-                phn = line.strip().split(' ')[2]
-                if phn in global_map:
-                    global_map[phn] += 1
-                else:
-                    global_map[phn] = 1
-
-    save_phonemes()
-
-
-def load_data(train_pkl='./train.pkl', test_pkl='./test.pkl'):
+def load_data(
+      train_data_path='../../dataset/TIMIT/TRAIN', train_pkl='data/train.pkl',
+      test_data_path='../../dataset/TIMIT/TEST', test_pkl='data/test.pkl'):
     if not os.path.exists(train_pkl):
-        load_timit('../../dataset/TIMIT/TRAIN', './train.pkl')
+        load_timit(train_data_path, train_pkl)
     if not os.path.exists(test_pkl):
-        load_timit('../../dataset/TIMIT/TEST', './test.pkl')
+        load_timit(test_data_path, test_pkl)
 
     data = {}
     with open(train_pkl, 'rb') as pkl_file:
@@ -115,23 +88,42 @@ def load_data(train_pkl='./train.pkl', test_pkl='./test.pkl'):
     return data
 
 
-def process_input(data_set):
-    inputs = []
-    seq_lens = []
-    for data in data_set:
-        inputs.append(np.asarray(data['mel'], dtype=np.float32))
-        seq_lens.append(len(data['mel']))
+def load_single(file_prefix='../../dataset/TIMIT/TEST/DR1/MDAB0/SI1039'):
+    mel_seq = []
+    fs, audio = wav.read(file_prefix + '.WAV')
+    mfcc_feat = mfcc(audio, samplerate=fs)
+    # d_mfcc_feat = delta(mfcc_feat, 2)
+    fbank_feat = logfbank(audio, samplerate=fs)
+    for mel, fbank in zip(mfcc_feat, fbank_feat):
+        tmp = []
+        for a in mel:
+            tmp.append(a)
+        for a in fbank:
+            tmp.append(a)
+        mel_seq.append(np.asarray(tmp, dtype=np.float32))
 
-    return \
-        np.asarray(inputs), \
-        np.asarray(seq_lens, dtype=np.int32)
+    the_data = {
+        'prefix': file_prefix,
+        'sources': np.asarray([np.asarray(mel_seq)]),
+        'seq_len': np.asarray([len(mel_seq)])
+    }
+
+    return the_data
+
+
+def mean_std(inputs):
+    tmp = []
+    for src in inputs:
+        for ele in src:
+            tmp.append(ele)
+    tmp = np.asarray(tmp).flatten()
+    return np.mean(tmp), np.std(tmp)
 
 
 def process_target(data_set):
     indices = []
     values = []
-    for n, data in enumerate(data_set):
-        seq = data['phn_nb']
+    for n, seq in enumerate(data_set):
         indices.extend(zip([n] * len(seq), range(len(seq))))
         values.extend(seq)
 
@@ -140,21 +132,6 @@ def process_target(data_set):
     shape = np.asarray([len(data_set), indices.max(0)[1] + 1], dtype=np.int64)
 
     return np.asarray([indices, values, shape])
-
-
-def process_data(data_set):
-    inputs, seq_lens = process_input(data_set)
-    targets = process_target(data_set)
-
-    # print('process data.')
-    # print('inputs..........')
-    # print(inputs)
-    # print('seq_lens.......')
-    # print(seq_lens)
-    # print('targets')
-    # print(targets)
-
-    return inputs, seq_lens, targets
 
 
 def pad_sequences(sequences, maxlen=None, dtype=np.float32,
@@ -219,13 +196,7 @@ def pad_sequences(sequences, maxlen=None, dtype=np.float32,
 
 
 if __name__ == '__main__':
-    # find_all_phonemes('../../dataset/TIMIT/')
-    load_timit('../../dataset/TIMIT/TRAIN', './train.pkl')
-    load_timit('../../dataset/TIMIT/TEST', './test.pkl')
-
+    load_timit('../../dataset/TIMIT/TRAIN', './data/train.pkl')
+    load_timit('../../dataset/TIMIT/TEST', '././data/test.pkl')
     all_data = load_data()
-    print('Train set: ' + str(len(all_data['train_set'])))
-    print('Test  set: ' + str(len(all_data['test_set'])))
-
-    print(all_data['train_set'][0]['phn'])
-    print(all_data['train_set'][0]['phn_nb'])
+    print(mean_std(all_data['train_set']['sources']))
