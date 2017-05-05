@@ -88,7 +88,7 @@ def load_data(
     return data
 
 
-def load_single(file_prefix='../../dataset/TIMIT/TEST/DR1/MDAB0/SI1039'):
+def load_single(file_prefix='../../dataset/TIMIT/TEST/DR1/MDAB0/SX49'):
     mel_seq = []
     fs, audio = wav.read(file_prefix + '.WAV')
     mfcc_feat = mfcc(audio, samplerate=fs)

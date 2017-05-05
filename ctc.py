@@ -20,7 +20,7 @@ num_classes = 40
 
 num_hidden = 128
 num_layers = 1
-num_epochs = 500
+num_epochs = 1
 batch_size = 32
 # initial_learning_rate = 5e-3
 initial_learning_rate = 1e-3
@@ -40,9 +40,9 @@ test_set['sources'] = (test_set['sources'] - mean) / std
 train_set['sources'], train_set['seq_len'] = pad_sequences(train_set['sources'])
 test_set['sources'], test_set['seq_len'] = pad_sequences(test_set['sources'])
 
-# num_examples = batch_size
+num_examples = batch_size
 # num_val = 1
-num_examples = len(train_set['sources'])
+# num_examples = len(train_set['sources'])
 num_val = len(test_set['sources'])
 num_batches_per_epoch = int(num_examples/batch_size)
 
@@ -184,6 +184,6 @@ with tf.Session(graph=graph) as session:
         draw_feed = {inputs: one_data['sources'],
                      seq_len: one_data['seq_len']}
         prob = session.run([phoneme_prob], feed_dict=draw_feed)
-        sample_draw(prob[0])
+        sample_draw(prob[0], one_data['prefix'])
 
 # plt.show()
